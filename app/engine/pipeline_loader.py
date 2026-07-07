@@ -17,6 +17,7 @@ from typing import Dict, Any
 
 import json
 import yaml
+from app.models.pipeline import Pipeline, Step
 
 
 class PipelineLoader:
@@ -27,34 +28,48 @@ class PipelineLoader:
     SUPPORTED_EXTENSIONS = [".yaml", ".yml", ".json"]
 
     @staticmethod
-    def load(path: str | Path) -> Dict[str, Any]:
-        """
-        Carga un pipeline.
-
-        Parameters
-        ----------
-        path : str | Path
-
-        Returns
-        -------
-        dict
-        """
+    def load(path: str | Path) -> Pipeline:
 
         path = Path(path)
 
         if not path.exists():
-            raise FileNotFoundError(f"No existe el archivo: {path}")
+            raise FileNotFoundError(path)
 
         suffix = path.suffix.lower()
 
-        if suffix not in PipelineLoader.SUPPORTED_EXTENSIONS:
-            raise ValueError(
-                f"Formato no soportado: {suffix}"
+        if suffix in [".yaml", ".yml"]:
+
+            with open(path, "r", encoding="utf8") as f:
+                data = yaml.safe_load(f)
+
+        elif suffix == ".json":
+
+            with open(path, "r", encoding="utf8") as f:
+                data = json.load(f)
+
+        else:
+            raise ValueError(f"Formato no soportado: {suffix}")
+
+        pipeline = Pipeline(
+            name=data["name"],
+            description=data.get("description", ""),
+            version=data.get("version", "1.0"),
+        )
+
+        for step_data in data.get("steps", []):
+
+            config = {
+                k: v
+                for k, v in step_data.items()
+                if k not in ("name", "type")
+            }
+
+            pipeline.add_step(
+                Step(
+                    name=step_data["name"],
+                    type=step_data["type"],
+                    config=config,
+                )
             )
 
-        if suffix in [".yaml", ".yml"]:
-            with open(path, "r", encoding="utf-8") as f:
-                return yaml.safe_load(f)
-
-        with open(path, "r", encoding="utf-8") as f:
-            return json.load(f)
+        return pipeline
