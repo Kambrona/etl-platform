@@ -1,9 +1,28 @@
 name: Demo Pipeline
 
-description: Primer pipeline
+description: MVP pipeline
 
 steps:
 
   - name: clientes
     type: read_csv
     path: data/clientes.csv
+
+  - name: clientes_renombrados
+    type: rename_columns
+    input: clientes
+    columns:
+      nombre: cliente
+      ciudad: ciudad_residencia
+
+  - name: clientes_filtrados
+    type: filter_rows
+    input: clientes_renombrados
+    column: edad
+    operator: ">"
+    value: 30
+
+  - name: exportar_parquet
+    type: export_parquet
+    input: clientes_filtrados
+    path: output/clientes_filtrados.parquet
