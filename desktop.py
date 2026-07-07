@@ -1,18 +1,5 @@
-import sys
-
-from PySide6.QtWidgets import QApplication
-
-from app.desktop.main_window import MainWindow
-
-
-def main():
-    app = QApplication(sys.argv)
-
-    window = MainWindow()
-    window.show()
-
-    sys.exit(app.exec())
+from app.desktop.desktop_app import run_desktop_app
 
 
 if __name__ == "__main__":
-    main()
+    run_desktop_app()

@@ -1,106 +1,282 @@
-import app.transformations.readers.read_csv_step
-import app.transformations.columns.rename_columns_step
-import app.transformations.filters.filter_rows_step
-import app.transformations.exports.export_parquet_step
+from pathlib import Path
+from app.desktop.dialogs.add_transformation_dialog import AddTransformationDialog
 
+from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
-    QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
-    QPushButton, QLabel, QLineEdit, QTextEdit,
-    QTableWidget, QTableWidgetItem, QListWidget
+    QFileDialog,
+    QMainWindow,
+    QMessageBox,
+    QSplitter,
+    QStatusBar,
+    QTabWidget,
+    QWidget,
+    QVBoxLayout,
 )
 
-from app.engine.pipeline_loader import PipelineLoader
-from app.engine.pipeline_runner import PipelineRunner
+from app.desktop.services.pipeline_desktop_service import PipelineDesktopService
+from app.desktop.widgets.data_preview import DataPreviewTable
+from app.desktop.widgets.logs_panel import LogsPanel
+from app.desktop.widgets.menu_bar import AppMenuBar
+from app.desktop.widgets.pipeline_tree import PipelineTree
+from app.desktop.widgets.project_tree import ProjectTree
+from app.desktop.widgets.properties_panel import PropertiesPanel
+from app.desktop.widgets.toolbar import MainToolBar
 
 
 class MainWindow(QMainWindow):
+    """Main desktop window for the ETL platform."""
 
-    def __init__(self):
+    def __init__(self) -> None:
         super().__init__()
 
-        self.setWindowTitle("ETL Platform - Desktop MVP")
-        self.resize(1200, 700)
+        self.service = PipelineDesktopService()
 
-        self.pipeline_input = QLineEdit("pipelines/demo.yaml")
-        self.output_input = QLineEdit("clientes_filtrados")
+        self.setWindowTitle("ETL Platform Desktop")
+        self.resize(1600, 900)
 
-        self.run_button = QPushButton("Ejecutar Pipeline")
-        self.run_button.clicked.connect(self.run_pipeline)
+        self.menu = AppMenuBar(self)
+        self.setMenuBar(self.menu)
 
-        self.steps_list = QListWidget()
-        self.table = QTableWidget()
-        self.logs = QTextEdit()
-        self.logs.setReadOnly(True)
+        self.toolbar = MainToolBar(
+            new_action=self.menu.new_pipeline_action,
+            open_csv_action=self.menu.open_csv_action,
+            open_excel_action=self.menu.open_excel_action,
+            save_action=self.menu.save_pipeline_action,
+            run_action=self.menu.run_action,
+            export_action=self.menu.export_action,
+            parent=self,
+        )
+        self.addToolBar(self.toolbar)
 
-        layout = QVBoxLayout()
+        self.status = QStatusBar(self)
+        self.setStatusBar(self.status)
 
-        top = QHBoxLayout()
-        top.addWidget(QLabel("Pipeline:"))
-        top.addWidget(self.pipeline_input)
-        top.addWidget(QLabel("Resultado:"))
-        top.addWidget(self.output_input)
-        top.addWidget(self.run_button)
+        self.project_tree = ProjectTree(self)
+        self.pipeline_tree = PipelineTree(self)
+        self.properties_panel = PropertiesPanel(self)
+        self.data_preview = DataPreviewTable(self)
+        self.logs_panel = LogsPanel(self)
 
-        body = QHBoxLayout()
+        self._build_layout()
+        self._connect_actions()
+        self._refresh_ui()
 
-        left = QVBoxLayout()
-        left.addWidget(QLabel("Pasos"))
-        left.addWidget(self.steps_list)
+        self.logs_panel.log("Aplicación iniciada correctamente.")
+        self.status.showMessage("Listo")
 
-        right = QVBoxLayout()
-        right.addWidget(QLabel("Vista previa"))
-        right.addWidget(self.table)
-        right.addWidget(QLabel("Logs"))
-        right.addWidget(self.logs)
+    def _build_layout(self) -> None:
+        left_splitter = QSplitter(Qt.Vertical)
+        left_splitter.addWidget(self.project_tree)
+        left_splitter.addWidget(self.pipeline_tree)
+        left_splitter.setSizes([350, 450])
 
-        body.addLayout(left, 1)
-        body.addLayout(right, 3)
+        center_tabs = QTabWidget()
+        center_tabs.addTab(self.data_preview, "Vista previa")
 
-        layout.addLayout(top)
-        layout.addLayout(body)
+        bottom_tabs = QTabWidget()
+        bottom_tabs.addTab(self.logs_panel, "Logs")
+
+        center_splitter = QSplitter(Qt.Vertical)
+        center_splitter.addWidget(center_tabs)
+        center_splitter.addWidget(bottom_tabs)
+        center_splitter.setSizes([650, 250])
+
+        main_splitter = QSplitter(Qt.Horizontal)
+        main_splitter.addWidget(left_splitter)
+        main_splitter.addWidget(center_splitter)
+        main_splitter.addWidget(self.properties_panel)
+        main_splitter.setSizes([300, 950, 350])
 
         container = QWidget()
-        container.setLayout(layout)
+        layout = QVBoxLayout(container)
+        layout.addWidget(main_splitter)
+
         self.setCentralWidget(container)
 
-    def run_pipeline(self):
-        self.steps_list.clear()
-        self.logs.clear()
-        self.table.clear()
+    def _connect_actions(self) -> None:
+        self.menu.new_pipeline_action.triggered.connect(self.create_pipeline)
+        self.menu.open_csv_action.triggered.connect(self.open_csv)
+        self.menu.open_excel_action.triggered.connect(self.open_excel)
+        self.menu.open_pipeline_action.triggered.connect(self.open_pipeline)
+        self.menu.save_pipeline_action.triggered.connect(self.save_pipeline)
+        self.menu.run_action.triggered.connect(self.run_pipeline)
+        self.menu.export_action.triggered.connect(self.export_pipeline)
+        self.menu.exit_action.triggered.connect(self.close)
 
-        pipeline_path = self.pipeline_input.text()
-        output_name = self.output_input.text()
+    def create_pipeline(self) -> None:
+        self.service.create_pipeline()
+        self.data_preview.clear()
+        self.logs_panel.log("Nuevo pipeline creado.")
+        self.status.showMessage("Nuevo pipeline creado")
+        self._refresh_ui()
 
-        pipeline = PipelineLoader.load(pipeline_path)
-        runner = PipelineRunner()
-        context = runner.run(pipeline)
+    def open_csv(self) -> None:
+        file_path, _ = QFileDialog.getOpenFileName(
+            self,
+            "Abrir CSV",
+            "",
+            "CSV Files (*.csv)",
+        )
 
-        for step in pipeline.steps:
-            self.steps_list.addItem(f"{step.name} ({step.type})")
-
-        for step_result in context.result.steps:
-            self.logs.append(
-                f"OK {step_result.step_name} - {step_result.duration:.4f} s"
-            )
-
-        df = context.get_dataframe(output_name)
-
-        if df is None:
-            self.logs.append(f"No existe el dataframe: {output_name}")
+        if not file_path:
             return
 
-        self.table.setRowCount(df.height)
-        self.table.setColumnCount(df.width)
-        self.table.setHorizontalHeaderLabels(df.columns)
+        try:
+            dataframe = self.service.open_csv(Path(file_path))
+            self.data_preview.load_dataframe(dataframe)
+            self.logs_panel.log(f"CSV abierto: {file_path}")
+            self.status.showMessage("CSV cargado correctamente")
+            self._refresh_ui()
+        except Exception as exc:
+            self._show_error("Error abriendo CSV", exc)
 
-        rows = df.rows()
+    def open_excel(self) -> None:
+        file_path, _ = QFileDialog.getOpenFileName(
+            self,
+            "Abrir Excel",
+            "",
+            "Excel Files (*.xlsx *.xls)",
+        )
 
-        for row_index, row in enumerate(rows):
-            for col_index, value in enumerate(row):
-                self.table.setItem(
-                    row_index,
-                    col_index,
-                    QTableWidgetItem(str(value))
-                )
+        if not file_path:
+            return
 
-        self.logs.append("Pipeline ejecutado correctamente.")
+        try:
+            dataframe = self.service.open_excel(Path(file_path))
+            self.data_preview.load_dataframe(dataframe)
+            self.logs_panel.log(f"Excel abierto: {file_path}")
+            self.status.showMessage("Excel cargado correctamente")
+            self._refresh_ui()
+        except Exception as exc:
+            self._show_error("Error abriendo Excel", exc)
+
+    def open_pipeline(self) -> None:
+        file_path, _ = QFileDialog.getOpenFileName(
+            self,
+            "Abrir Pipeline",
+            "",
+            "YAML Files (*.yaml *.yml)",
+        )
+
+        if not file_path:
+            return
+
+        try:
+            self.service.load_pipeline(Path(file_path))
+            self.logs_panel.log(f"Pipeline abierto: {file_path}")
+            self.status.showMessage("Pipeline abierto correctamente")
+            self._refresh_ui()
+        except Exception as exc:
+            self._show_error("Error abriendo pipeline", exc)
+
+    def save_pipeline(self) -> None:
+        current_path = self.service.state.pipeline_path
+
+        if current_path:
+            file_path = str(current_path)
+        else:
+            file_path, _ = QFileDialog.getSaveFileName(
+                self,
+                "Guardar Pipeline",
+                "",
+                "YAML Files (*.yaml *.yml)",
+            )
+
+        if not file_path:
+            return
+
+        try:
+            self.service.save_pipeline(Path(file_path))
+            self.logs_panel.log(f"Pipeline guardado: {file_path}")
+            self.status.showMessage("Pipeline guardado correctamente")
+            self._refresh_ui()
+        except Exception as exc:
+            self._show_error("Error guardando pipeline", exc)
+
+    def run_pipeline(self) -> None:
+        try:
+            dataframe = self.service.run_pipeline_preview_mode()
+            self.data_preview.load_dataframe(dataframe)
+            self.logs_panel.log("Pipeline ejecutado en modo preview.")
+            self.status.showMessage("Pipeline ejecutado")
+            self._refresh_ui()
+        except Exception as exc:
+            self._show_error("Error ejecutando pipeline", exc)
+
+    def export_pipeline(self) -> None:
+        file_path, _ = QFileDialog.getSaveFileName(
+            self,
+            "Exportar Parquet",
+            "",
+            "Parquet Files (*.parquet)",
+        )
+
+        if not file_path:
+            return
+
+        try:
+            output_path = Path(file_path)
+            self.service.add_export_step(output_path)
+
+            dataframe = self.service.run_pipeline_preview_mode()
+            dataframe.write_parquet(output_path)
+
+            self.service.state.last_result_path = output_path
+
+            self.logs_panel.log(f"Resultado exportado: {output_path}")
+            self.status.showMessage("Exportación completada")
+            self._refresh_ui()
+        except Exception as exc:
+            self._show_error("Error exportando resultado", exc)
+
+    def _refresh_ui(self) -> None:
+        state = self.service.state
+
+        self.project_tree.refresh(state.source_path)
+        self.pipeline_tree.refresh(state.steps)
+
+        self.properties_panel.update_properties(
+            {
+                "pipeline_name": state.pipeline_name,
+                "source_path": state.source_path or "-",
+                "output_path": state.output_path or "-",
+                "steps_count": len(state.steps),
+            }
+        )
+
+        dirty_mark = "*" if state.is_dirty else ""
+        self.setWindowTitle(f"ETL Platform Desktop - {state.pipeline_name}{dirty_mark}")
+
+    def _show_error(self, title: str, exc: Exception) -> None:
+        self.logs_panel.log(f"{title}: {exc}")
+        self.status.showMessage("Error")
+        QMessageBox.critical(self, title, str(exc))
+        def add_transformation(self) -> None:
+            try:
+                dataframe = self.service.preview_current_source()
+
+                if dataframe.is_empty():
+                    QMessageBox.warning(
+                        self,
+                        "Sin datos",
+                        "Primero debes abrir un CSV o Excel.",
+                    )
+                    return
+
+                dialog = AddTransformationDialog(dataframe.columns, self)
+
+                if dialog.exec() != dialog.Accepted:
+                    return
+
+                step = dialog.get_step()
+                self.service.add_transformation_step(step)
+
+                result = self.service.run_pipeline_preview_mode()
+                self.data_preview.load_dataframe(result)
+
+                self.logs_panel.log(f"Transformación agregada: {step['type']}")
+                self.status.showMessage("Transformación agregada")
+                self._refresh_ui()
+
+            except Exception as exc:
+                self._show_error("Error agregando transformación", exc)
