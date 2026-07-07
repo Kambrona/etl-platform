@@ -8,6 +8,8 @@ from typing import Type
 
 from app.engine.base_step import BaseStep
 
+from app.exceptions import StepNotRegisteredException
+
 
 class StepRegistry:
     """
@@ -32,8 +34,8 @@ class StepRegistry:
     ) -> Type[BaseStep]:
 
         if name not in cls._registry:
-            raise ValueError(
-                f"No existe el paso '{name}'."
+            raise StepNotRegisteredException(
+                f"El paso '{name}' no está registrado."
             )
 
         return cls._registry[name]
