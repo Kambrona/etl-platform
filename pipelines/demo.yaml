@@ -2,21 +2,8 @@ name: Demo Pipeline
 
 description: Primer pipeline
 
-# steps:
-
-  # - name: leer_csv
-  #   type: read_csv
-  #   path: data/clientes.csv
-
-  # - name: exportar
-  #   type: export
-  #   format: parquet
-  #   path: output/clientes.parquet
-
 steps:
 
-  - name: prueba
-    type: noop
-
-  - name: exportar
-    type: noop
+  - name: clientes
+    type: read_csv
+    path: data/clientes.csv

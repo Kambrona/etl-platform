@@ -6,10 +6,7 @@ def test_loader():
     pipeline = PipelineLoader.load("pipelines/demo.yaml")
 
     assert pipeline.name == "Demo Pipeline"
-    assert pipeline.total_steps == 2
+    assert pipeline.total_steps == 1
 
-    assert pipeline.steps[0].name == "prueba"
-    assert pipeline.steps[0].type == "noop"
-
-    assert pipeline.steps[1].name == "exportar"
-    assert pipeline.steps[1].type == "noop"
+    assert pipeline.steps[0].name == "clientes"
+    assert pipeline.steps[0].type == "read_csv"

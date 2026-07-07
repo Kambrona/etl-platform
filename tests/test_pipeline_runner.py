@@ -1,4 +1,4 @@
-import app.transformations.no_op_step
+import app.transformations.readers.read_csv_step
 
 from app.engine.pipeline_loader import PipelineLoader
 from app.engine.pipeline_runner import PipelineRunner
@@ -12,8 +12,10 @@ def test_runner():
 
     runner = PipelineRunner()
 
-    result = runner.run(pipeline)
+    context = runner.run(pipeline)
 
-    assert result.success
+    df = context.get_dataframe("clientes")
 
-    assert result.total_steps == 2
+    assert df is not None
+
+    assert df.shape == (5, 4)

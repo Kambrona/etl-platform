@@ -5,6 +5,7 @@ Motor principal de ejecución de pipelines.
 from __future__ import annotations
 
 from datetime import datetime
+from multiprocessing import context
 
 from app.engine.step_executor import StepExecutor
 from app.models.execution import ExecutionContext, PipelineResult
@@ -38,4 +39,4 @@ class PipelineRunner:
 
         context.result.finished_at = datetime.now()
 
-        return context.result
+        return context
