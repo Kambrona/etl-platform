@@ -176,3 +176,84 @@ class PipelineDesktopService:
         """Execute the currently supported desktop preview flow."""
         dataframe = self.preview_current_source()
         return self.apply_preview_transformations(dataframe)
+    
+    def generate_python_script(self) -> str:
+        """Generate Python script from current desktop pipeline steps."""
+        lines = [
+            "import polars as pl",
+            "",
+            "",
+        ]
+
+        dataframe_name = "df"
+
+        for step in self.state.steps:
+            step_type = step.get("type")
+            config = step.get("config", {})
+
+            if step_type == "read_csv":
+                path = config.get("path", "")
+                lines.append(f'{dataframe_name} = pl.read_csv(r"{path}")')
+
+            elif step_type == "read_excel":
+                path = config.get("path", "")
+                lines.append(f'{dataframe_name} = pl.read_excel(r"{path}")')
+
+            elif step_type == "rename_columns":
+                columns = config.get("columns", {})
+                lines.append(f"{dataframe_name} = {dataframe_name}.rename({columns!r})")
+
+            elif step_type == "filter_rows":
+                expression = config.get("expression", "")
+                lines.append(
+                    f'{dataframe_name} = {dataframe_name}.sql("SELECT * FROM self WHERE {expression}")'
+                )
+
+            elif step_type == "select_columns":
+                columns = config.get("columns", [])
+                lines.append(f"{dataframe_name} = {dataframe_name}.select({columns!r})")
+
+            elif step_type == "drop_columns":
+                columns = config.get("columns", [])
+                lines.append(f"{dataframe_name} = {dataframe_name}.drop({columns!r})")
+
+            elif step_type == "export_parquet":
+                path = config.get("path", "")
+                lines.append(f'{dataframe_name}.write_parquet(r"{path}")')
+
+        return "\n".join(lines)
+    
+    def run_pipeline_until_step(self, step_index: int) -> pl.DataFrame:
+        """Execute pipeline preview only until selected step index."""
+        dataframe = self.preview_current_source()
+
+        steps_to_apply = self.state.steps[: step_index + 1]
+
+        for step in steps_to_apply:
+            step_type = step.get("type")
+            config = step.get("config", {})
+
+            if step_type in {"read_csv", "read_excel", "export_parquet"}:
+                continue
+
+            if step_type == "rename_columns":
+                dataframe = dataframe.rename(config.get("columns", {}))
+
+            elif step_type == "filter_rows":
+                expression = config.get("expression")
+                if expression:
+                    dataframe = dataframe.sql(
+                        f"SELECT * FROM self WHERE {expression}"
+                    )
+
+            elif step_type == "select_columns":
+                columns = config.get("columns", [])
+                if columns:
+                    dataframe = dataframe.select(columns)
+
+            elif step_type == "drop_columns":
+                columns = config.get("columns", [])
+                if columns:
+                    dataframe = dataframe.drop(columns)
+
+        return dataframe

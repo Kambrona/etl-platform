@@ -3,6 +3,9 @@ from typing import Any
 from PySide6.QtWidgets import QTreeWidget, QTreeWidgetItem
 
 
+STEP_INDEX_ROLE = 1001
+
+
 class PipelineTree(QTreeWidget):
     """Tree widget that displays pipeline steps."""
 
@@ -18,10 +21,13 @@ class PipelineTree(QTreeWidget):
         root = QTreeWidgetItem(["Pipeline"])
         self.addTopLevelItem(root)
 
-        for index, step in enumerate(steps, start=1):
-            name = step.get("name") or step.get("type") or f"Step {index}"
+        for index, step in enumerate(steps):
+            label_number = index + 1
+            name = step.get("name") or step.get("type") or f"Step {label_number}"
             step_type = step.get("type", "unknown")
-            item = QTreeWidgetItem([f"{index}. {name} [{step_type}]"])
+
+            item = QTreeWidgetItem([f"{label_number}. {name} [{step_type}]"])
+            item.setData(0, STEP_INDEX_ROLE, index)
             root.addChild(item)
 
         self.expandAll()

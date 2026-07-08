@@ -1,9 +1,11 @@
 from pathlib import Path
 from app.desktop.dialogs.add_transformation_dialog import AddTransformationDialog
+from app.desktop.widgets.pipeline_tree import PipelineTree, STEP_INDEX_ROLE
 
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
     QFileDialog,
+    QDialog,
     QMainWindow,
     QMessageBox,
     QSplitter,
@@ -21,6 +23,7 @@ from app.desktop.widgets.pipeline_tree import PipelineTree
 from app.desktop.widgets.project_tree import ProjectTree
 from app.desktop.widgets.properties_panel import PropertiesPanel
 from app.desktop.widgets.toolbar import MainToolBar
+from app.desktop.widgets.transformation_catalog import TransformationCatalog
 
 
 class MainWindow(QMainWindow):
@@ -53,6 +56,11 @@ class MainWindow(QMainWindow):
 
         self.project_tree = ProjectTree(self)
         self.pipeline_tree = PipelineTree(self)
+        self.pipeline_tree.itemDoubleClicked.connect(self.preview_until_selected_step)
+        self.transformation_catalog = TransformationCatalog(self)
+        self.transformation_catalog.itemDoubleClicked.connect(
+            self.add_transformation_from_catalog
+        )
         self.properties_panel = PropertiesPanel(self)
         self.data_preview = DataPreviewTable(self)
         self.logs_panel = LogsPanel(self)
@@ -67,9 +75,10 @@ class MainWindow(QMainWindow):
     def _build_layout(self) -> None:
         left_splitter = QSplitter(Qt.Vertical)
         left_splitter.addWidget(self.project_tree)
+        left_splitter.addWidget(self.transformation_catalog)
         left_splitter.addWidget(self.pipeline_tree)
-        left_splitter.setSizes([350, 450])
-
+        left_splitter.setSizes([250, 250, 350])   
+                
         center_tabs = QTabWidget()
         center_tabs.addTab(self.data_preview, "Vista previa")
 
@@ -100,6 +109,7 @@ class MainWindow(QMainWindow):
         self.menu.open_pipeline_action.triggered.connect(self.open_pipeline)
         self.menu.save_pipeline_action.triggered.connect(self.save_pipeline)
         self.menu.run_action.triggered.connect(self.run_pipeline)
+        self.menu.add_transformation_action.triggered.connect(self.add_transformation)
         self.menu.export_action.triggered.connect(self.export_pipeline)
         self.menu.exit_action.triggered.connect(self.close)
 
@@ -241,42 +251,73 @@ class MainWindow(QMainWindow):
                 "source_path": state.source_path or "-",
                 "output_path": state.output_path or "-",
                 "steps_count": len(state.steps),
+                "generated_script": self.service.generate_python_script(),
             }
         )
-
         dirty_mark = "*" if state.is_dirty else ""
         self.setWindowTitle(f"ETL Platform Desktop - {state.pipeline_name}{dirty_mark}")
+
+    def add_transformation_from_catalog(self, item) -> None:
+        step_type = item.data(1000)
+
+        if not step_type:
+            return
+
+        self.add_transformation(step_type)
+
+    def add_transformation(self, forced_step_type: str | None = None) -> None:
+        try:
+            dataframe = self.service.preview_current_source()
+
+            if dataframe.is_empty():
+                QMessageBox.warning(
+                    self,
+                    "Sin datos",
+                    "Primero debes abrir un CSV o Excel.",
+                )
+                return
+
+            dialog = AddTransformationDialog(
+                dataframe.columns,
+                self,
+                forced_step_type=forced_step_type,
+            )
+
+            if dialog.exec() != QDialog.DialogCode.Accepted:
+                return
+
+            step = dialog.get_step()
+            self.service.add_transformation_step(step)
+
+            result = self.service.run_pipeline_preview_mode()
+            self.data_preview.load_dataframe(result)
+
+            self.logs_panel.log(f"Transformación agregada: {step['type']}")
+            self.status.showMessage("Transformación agregada")
+            self._refresh_ui()
+
+        except Exception as exc:
+            self._show_error("Error agregando transformación", exc)
 
     def _show_error(self, title: str, exc: Exception) -> None:
         self.logs_panel.log(f"{title}: {exc}")
         self.status.showMessage("Error")
         QMessageBox.critical(self, title, str(exc))
-        def add_transformation(self) -> None:
-            try:
-                dataframe = self.service.preview_current_source()
 
-                if dataframe.is_empty():
-                    QMessageBox.warning(
-                        self,
-                        "Sin datos",
-                        "Primero debes abrir un CSV o Excel.",
-                    )
-                    return
+    def preview_until_selected_step(self, item) -> None:
+        step_index = item.data(0, STEP_INDEX_ROLE)
 
-                dialog = AddTransformationDialog(dataframe.columns, self)
+        if step_index is None:
+            return
 
-                if dialog.exec() != dialog.Accepted:
-                    return
+        try:
+            dataframe = self.service.run_pipeline_until_step(step_index)
+            self.data_preview.load_dataframe(dataframe)
 
-                step = dialog.get_step()
-                self.service.add_transformation_step(step)
+            self.logs_panel.log(
+                f"Vista previa hasta el paso {step_index + 1}."
+            )
+            self.status.showMessage(f"Preview hasta paso {step_index + 1}")
 
-                result = self.service.run_pipeline_preview_mode()
-                self.data_preview.load_dataframe(result)
-
-                self.logs_panel.log(f"Transformación agregada: {step['type']}")
-                self.status.showMessage("Transformación agregada")
-                self._refresh_ui()
-
-            except Exception as exc:
-                self._show_error("Error agregando transformación", exc)
+        except Exception as exc:
+            self._show_error("Error mostrando preview por paso", exc)
