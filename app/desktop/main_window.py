@@ -1,5 +1,9 @@
-from pathlib import Path
+﻿from pathlib import Path
 from app.desktop.dialogs.add_transformation_dialog import AddTransformationDialog
+from app.desktop.dialogs.add_data_source_dialog import AddDataSourceDialog
+from app.desktop.dialogs.select_excel_sheet_dialog import SelectExcelSheetDialog
+from app.desktop.dialogs.add_data_source_dialog import AddDataSourceDialog
+from app.desktop.dialogs.select_excel_sheet_dialog import SelectExcelSheetDialog
 from app.desktop.widgets.pipeline_tree import PipelineTree, STEP_INDEX_ROLE
 
 from PySide6.QtCore import Qt
@@ -20,7 +24,7 @@ from app.desktop.widgets.data_preview import DataPreviewTable
 from app.desktop.widgets.logs_panel import LogsPanel
 from app.desktop.widgets.menu_bar import AppMenuBar
 from app.desktop.widgets.pipeline_tree import PipelineTree
-from app.desktop.widgets.project_tree import ProjectTree
+from app.desktop.widgets.project_tree import ProjectTree, SOURCE_NAME_ROLE, SOURCE_NAME_ROLE
 from app.desktop.widgets.properties_panel import PropertiesPanel
 from app.desktop.widgets.toolbar import MainToolBar
 from app.desktop.widgets.transformation_catalog import TransformationCatalog
@@ -55,6 +59,8 @@ class MainWindow(QMainWindow):
         self.setStatusBar(self.status)
 
         self.project_tree = ProjectTree(self)
+        self.project_tree.itemDoubleClicked.connect(self.activate_source_from_project_tree)
+        self.project_tree.itemDoubleClicked.connect(self.activate_source_from_project_tree)
         self.pipeline_tree = PipelineTree(self)
         self.pipeline_tree.itemDoubleClicked.connect(self.preview_until_selected_step)
         self.transformation_catalog = TransformationCatalog(self)
@@ -69,7 +75,7 @@ class MainWindow(QMainWindow):
         self._connect_actions()
         self._refresh_ui()
 
-        self.logs_panel.log("Aplicación iniciada correctamente.")
+        self.logs_panel.log("AplicaciÃ³n iniciada correctamente.")
         self.status.showMessage("Listo")
 
     def _build_layout(self) -> None:
@@ -234,7 +240,7 @@ class MainWindow(QMainWindow):
             self.service.state.last_result_path = output_path
 
             self.logs_panel.log(f"Resultado exportado: {output_path}")
-            self.status.showMessage("Exportación completada")
+            self.status.showMessage("ExportaciÃ³n completada")
             self._refresh_ui()
         except Exception as exc:
             self._show_error("Error exportando resultado", exc)
@@ -242,7 +248,7 @@ class MainWindow(QMainWindow):
     def _refresh_ui(self) -> None:
         state = self.service.state
 
-        self.project_tree.refresh(state.source_path)
+        self.project_tree.refresh_workspace(self.service.workspace)
         self.pipeline_tree.refresh(state.steps)
 
         self.properties_panel.update_properties(
@@ -292,13 +298,30 @@ class MainWindow(QMainWindow):
             result = self.service.run_pipeline_preview_mode()
             self.data_preview.load_dataframe(result)
 
-            self.logs_panel.log(f"Transformación agregada: {step['type']}")
-            self.status.showMessage("Transformación agregada")
+            self.logs_panel.log(f"TransformaciÃ³n agregada: {step['type']}")
+            self.status.showMessage("TransformaciÃ³n agregada")
             self._refresh_ui()
 
         except Exception as exc:
-            self._show_error("Error agregando transformación", exc)
+            self._show_error("Error agregando transformaciÃ³n", exc)
 
+
+    def activate_source_from_project_tree(self, item) -> None:
+        source_name = item.data(0, SOURCE_NAME_ROLE)
+
+        if not source_name:
+            return
+
+        try:
+            dataframe = self.service.activate_source_as_query(source_name)
+            self.data_preview.load_dataframe(dataframe)
+
+            self.logs_panel.log(f"Fuente activada como consulta: {source_name}")
+            self.status.showMessage(f"Consulta activa: {source_name}")
+            self._refresh_ui()
+
+        except Exception as exc:
+            self._show_error("Error activando fuente", exc)
     def _show_error(self, title: str, exc: Exception) -> None:
         self.logs_panel.log(f"{title}: {exc}")
         self.status.showMessage("Error")
@@ -321,3 +344,4 @@ class MainWindow(QMainWindow):
 
         except Exception as exc:
             self._show_error("Error mostrando preview por paso", exc)
+

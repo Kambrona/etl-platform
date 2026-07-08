@@ -1,4 +1,4 @@
-from typing import Any
+﻿from typing import Any
 
 from PySide6.QtWidgets import QTreeWidget, QTreeWidgetItem
 
@@ -7,18 +7,18 @@ STEP_INDEX_ROLE = 1001
 
 
 class PipelineTree(QTreeWidget):
-    """Tree widget that displays pipeline steps."""
+    """Tree widget that displays query transformation steps."""
 
     def __init__(self, parent=None) -> None:
         super().__init__(parent)
 
-        self.setHeaderLabel("Pipeline")
+        self.setHeaderLabel("Transformaciones")
         self.refresh([])
 
     def refresh(self, steps: list[dict[str, Any]]) -> None:
         self.clear()
 
-        root = QTreeWidgetItem(["Pipeline"])
+        root = QTreeWidgetItem(["Consulta activa"])
         self.addTopLevelItem(root)
 
         for index, step in enumerate(steps):
