@@ -8,6 +8,8 @@ from openpyxl import load_workbook
 from app.desktop.models.data_source import DataSource
 from app.desktop.models.desktop_pipeline_state import DesktopPipelineState
 from app.desktop.models.workspace_state import WorkspaceState
+from app.desktop.transformations.default_registry import build_default_transformation_registry
+from app.desktop.transformations.transformation_registry import TransformationRegistry
 
 
 class PipelineDesktopService:
@@ -16,6 +18,7 @@ class PipelineDesktopService:
     def __init__(self) -> None:
         self.workspace = WorkspaceState()
         self.state = self.workspace.active_query
+        self.transformations: TransformationRegistry = build_default_transformation_registry()
 
     def create_pipeline(self, name: str = "Consulta sin nombre") -> DesktopPipelineState:
         self.workspace.active_query = DesktopPipelineState(pipeline_name=name)
@@ -43,6 +46,7 @@ class PipelineDesktopService:
 
         for index, value in enumerate(rows[0]):
             header = str(value).strip() if value is not None else f"Column_{index + 1}"
+
             if not header:
                 header = f"Column_{index + 1}"
 
@@ -60,8 +64,10 @@ class PipelineDesktopService:
 
         for row in rows[1:]:
             record = {}
+
             for index, header in enumerate(headers):
                 record[header] = row[index] if index < len(row) else None
+
             records.append(record)
 
         return pl.DataFrame(records, infer_schema_length=None, strict=False)
@@ -245,45 +251,11 @@ class PipelineDesktopService:
         if step_type in {"read_csv", "read_excel", "read_parquet", "export_parquet"}:
             return dataframe
 
-        if step_type == "rename_columns":
-            return dataframe.rename(config.get("columns", {}))
+        if not self.transformations.exists(step_type):
+            raise ValueError(f"Transformación no registrada: {step_type}")
 
-        if step_type == "filter_rows":
-            expression = config.get("expression")
-            return dataframe.sql(f"SELECT * FROM self WHERE {expression}") if expression else dataframe
-
-        if step_type == "select_columns":
-            columns = config.get("columns", [])
-            return dataframe.select(columns) if columns else dataframe
-
-        if step_type == "drop_columns":
-            columns = config.get("columns", [])
-            return dataframe.drop(columns) if columns else dataframe
-
-        if step_type == "sort_rows":
-            column = config.get("column")
-            return dataframe.sort(column, descending=config.get("descending", False)) if column else dataframe
-
-        if step_type == "remove_duplicates":
-            columns = config.get("columns", [])
-            return dataframe.unique(subset=columns, keep="first") if columns else dataframe.unique(keep="first")
-
-        if step_type == "limit_rows":
-            return dataframe.head(config.get("n", 100))
-
-        if step_type == "uppercase":
-            column = config.get("column")
-            return dataframe.with_columns(pl.col(column).cast(pl.Utf8).str.to_uppercase().alias(column)) if column else dataframe
-
-        if step_type == "lowercase":
-            column = config.get("column")
-            return dataframe.with_columns(pl.col(column).cast(pl.Utf8).str.to_lowercase().alias(column)) if column else dataframe
-
-        if step_type == "trim":
-            column = config.get("column")
-            return dataframe.with_columns(pl.col(column).cast(pl.Utf8).str.strip_chars().alias(column)) if column else dataframe
-
-        return dataframe
+        transformation = self.transformations.get(step_type)
+        return transformation.apply(dataframe, config)
 
     def apply_preview_transformations(self, dataframe: pl.DataFrame) -> pl.DataFrame:
         result = dataframe
@@ -327,47 +299,14 @@ class PipelineDesktopService:
             elif step_type == "read_parquet":
                 lines.append(f'{dataframe_name} = pl.read_parquet(r"{config.get("path", "")}")')
 
-            elif step_type == "rename_columns":
-                lines.append(f"{dataframe_name} = {dataframe_name}.rename({config.get('columns', {})!r})")
-
-            elif step_type == "filter_rows":
-                expression = config.get("expression", "")
-                lines.append(f'{dataframe_name} = {dataframe_name}.sql("SELECT * FROM self WHERE {expression}")')
-
-            elif step_type == "select_columns":
-                lines.append(f"{dataframe_name} = {dataframe_name}.select({config.get('columns', [])!r})")
-
-            elif step_type == "drop_columns":
-                lines.append(f"{dataframe_name} = {dataframe_name}.drop({config.get('columns', [])!r})")
-
-            elif step_type == "sort_rows":
-                lines.append(
-                    f"{dataframe_name} = {dataframe_name}.sort({config.get('column', '')!r}, descending={config.get('descending', False)!r})"
-                )
-
-            elif step_type == "remove_duplicates":
-                columns = config.get("columns", [])
-                if columns:
-                    lines.append(f"{dataframe_name} = {dataframe_name}.unique(subset={columns!r}, keep='first')")
-                else:
-                    lines.append(f"{dataframe_name} = {dataframe_name}.unique(keep='first')")
-
-            elif step_type == "limit_rows":
-                lines.append(f"{dataframe_name} = {dataframe_name}.head({config.get('n', 100)!r})")
-
-            elif step_type == "uppercase":
-                column = config.get("column", "")
-                lines.append(f"{dataframe_name} = {dataframe_name}.with_columns(pl.col({column!r}).cast(pl.Utf8).str.to_uppercase().alias({column!r}))")
-
-            elif step_type == "lowercase":
-                column = config.get("column", "")
-                lines.append(f"{dataframe_name} = {dataframe_name}.with_columns(pl.col({column!r}).cast(pl.Utf8).str.to_lowercase().alias({column!r}))")
-
-            elif step_type == "trim":
-                column = config.get("column", "")
-                lines.append(f"{dataframe_name} = {dataframe_name}.with_columns(pl.col({column!r}).cast(pl.Utf8).str.strip_chars().alias({column!r}))")
-
             elif step_type == "export_parquet":
                 lines.append(f'{dataframe_name}.write_parquet(r"{config.get("path", "")}")')
+
+            else:
+                if not self.transformations.exists(step_type):
+                    raise ValueError(f"Transformación no registrada: {step_type}")
+
+                transformation = self.transformations.get(step_type)
+                lines.extend(transformation.to_python(dataframe_name, config))
 
         return "\n".join(lines)
