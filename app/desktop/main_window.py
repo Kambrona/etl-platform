@@ -1,15 +1,8 @@
 ﻿from pathlib import Path
-from app.desktop.dialogs.add_transformation_dialog import AddTransformationDialog
-from app.desktop.dialogs.add_data_source_dialog import AddDataSourceDialog
-from app.desktop.dialogs.select_excel_sheet_dialog import SelectExcelSheetDialog
-from app.desktop.dialogs.add_data_source_dialog import AddDataSourceDialog
-from app.desktop.dialogs.select_excel_sheet_dialog import SelectExcelSheetDialog
-from app.desktop.widgets.pipeline_tree import PipelineTree, STEP_INDEX_ROLE
 
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
     QFileDialog,
-    QDialog,
     QMainWindow,
     QMessageBox,
     QSplitter,
@@ -19,12 +12,14 @@ from PySide6.QtWidgets import (
     QVBoxLayout,
 )
 
+from app.desktop.controllers.query_controller import QueryController
+from app.desktop.controllers.source_controller import SourceController
 from app.desktop.services.pipeline_desktop_service import PipelineDesktopService
 from app.desktop.widgets.data_preview import DataPreviewTable
 from app.desktop.widgets.logs_panel import LogsPanel
 from app.desktop.widgets.menu_bar import AppMenuBar
 from app.desktop.widgets.pipeline_tree import PipelineTree
-from app.desktop.widgets.project_tree import ProjectTree, SOURCE_NAME_ROLE, SOURCE_NAME_ROLE
+from app.desktop.widgets.project_tree import ProjectTree
 from app.desktop.widgets.properties_panel import PropertiesPanel
 from app.desktop.widgets.toolbar import MainToolBar
 from app.desktop.widgets.transformation_catalog import TransformationCatalog
@@ -37,6 +32,8 @@ class MainWindow(QMainWindow):
         super().__init__()
 
         self.service = PipelineDesktopService()
+        self.source_controller = SourceController(self)
+        self.query_controller = QueryController(self)
 
         self.setWindowTitle("ETL Platform Desktop")
         self.resize(1600, 900)
@@ -59,23 +56,38 @@ class MainWindow(QMainWindow):
         self.setStatusBar(self.status)
 
         self.project_tree = ProjectTree(self)
-        self.project_tree.itemDoubleClicked.connect(self.activate_source_from_project_tree)
-        self.project_tree.itemDoubleClicked.connect(self.activate_source_from_project_tree)
-        self.pipeline_tree = PipelineTree(self)
-        self.pipeline_tree.itemDoubleClicked.connect(self.preview_until_selected_step)
+        self.project_tree.itemDoubleClicked.connect(
+            self.source_controller.activate_source_from_tree
+        )
+
         self.transformation_catalog = TransformationCatalog(self)
         self.transformation_catalog.itemDoubleClicked.connect(
-            self.add_transformation_from_catalog
+            self.query_controller.add_transformation_from_catalog
         )
+
+        self.pipeline_tree = PipelineTree(self)
+        self.pipeline_tree.itemDoubleClicked.connect(
+            self.query_controller.preview_until_step
+        )
+        self.pipeline_tree.preview_step_requested.connect(
+            self.query_controller.preview_until_step_index
+        )
+        self.pipeline_tree.insert_after_step_requested.connect(
+            self.query_controller.insert_after_step
+        )
+        self.pipeline_tree.delete_step_requested.connect(
+            self.query_controller.delete_step
+        )
+
         self.properties_panel = PropertiesPanel(self)
         self.data_preview = DataPreviewTable(self)
         self.logs_panel = LogsPanel(self)
 
         self._build_layout()
         self._connect_actions()
-        self._refresh_ui()
+        self.refresh_ui()
 
-        self.logs_panel.log("AplicaciÃ³n iniciada correctamente.")
+        self.logs_panel.log("Aplicación iniciada correctamente.")
         self.status.showMessage("Listo")
 
     def _build_layout(self) -> None:
@@ -83,8 +95,8 @@ class MainWindow(QMainWindow):
         left_splitter.addWidget(self.project_tree)
         left_splitter.addWidget(self.transformation_catalog)
         left_splitter.addWidget(self.pipeline_tree)
-        left_splitter.setSizes([250, 250, 350])   
-                
+        left_splitter.setSizes([250, 250, 350])
+
         center_tabs = QTabWidget()
         center_tabs.addTab(self.data_preview, "Vista previa")
 
@@ -100,7 +112,7 @@ class MainWindow(QMainWindow):
         main_splitter.addWidget(left_splitter)
         main_splitter.addWidget(center_splitter)
         main_splitter.addWidget(self.properties_panel)
-        main_splitter.setSizes([300, 950, 350])
+        main_splitter.setSizes([320, 920, 360])
 
         container = QWidget()
         layout = QVBoxLayout(container)
@@ -109,67 +121,30 @@ class MainWindow(QMainWindow):
         self.setCentralWidget(container)
 
     def _connect_actions(self) -> None:
-        self.menu.new_pipeline_action.triggered.connect(self.create_pipeline)
-        self.menu.open_csv_action.triggered.connect(self.open_csv)
-        self.menu.open_excel_action.triggered.connect(self.open_excel)
-        self.menu.open_pipeline_action.triggered.connect(self.open_pipeline)
-        self.menu.save_pipeline_action.triggered.connect(self.save_pipeline)
-        self.menu.run_action.triggered.connect(self.run_pipeline)
-        self.menu.add_transformation_action.triggered.connect(self.add_transformation)
-        self.menu.export_action.triggered.connect(self.export_pipeline)
+        self.menu.new_pipeline_action.triggered.connect(self.create_query)
+        self.menu.open_csv_action.triggered.connect(self.source_controller.add_source)
+        self.menu.open_excel_action.triggered.connect(self.source_controller.add_source)
+        self.menu.open_pipeline_action.triggered.connect(self.open_query)
+        self.menu.save_pipeline_action.triggered.connect(self.save_query)
+        self.menu.run_action.triggered.connect(self.query_controller.run_query)
+        self.menu.add_transformation_action.triggered.connect(
+            self.query_controller.add_transformation
+        )
+        self.menu.export_action.triggered.connect(self.export_query)
+        self.menu.export_python_action.triggered.connect(self.export_python)
         self.menu.exit_action.triggered.connect(self.close)
 
-    def create_pipeline(self) -> None:
+    def create_query(self) -> None:
         self.service.create_pipeline()
         self.data_preview.clear()
-        self.logs_panel.log("Nuevo pipeline creado.")
-        self.status.showMessage("Nuevo pipeline creado")
-        self._refresh_ui()
+        self.logs_panel.log("Nueva consulta creada.")
+        self.status.showMessage("Nueva consulta creada")
+        self.refresh_ui()
 
-    def open_csv(self) -> None:
+    def open_query(self) -> None:
         file_path, _ = QFileDialog.getOpenFileName(
             self,
-            "Abrir CSV",
-            "",
-            "CSV Files (*.csv)",
-        )
-
-        if not file_path:
-            return
-
-        try:
-            dataframe = self.service.open_csv(Path(file_path))
-            self.data_preview.load_dataframe(dataframe)
-            self.logs_panel.log(f"CSV abierto: {file_path}")
-            self.status.showMessage("CSV cargado correctamente")
-            self._refresh_ui()
-        except Exception as exc:
-            self._show_error("Error abriendo CSV", exc)
-
-    def open_excel(self) -> None:
-        file_path, _ = QFileDialog.getOpenFileName(
-            self,
-            "Abrir Excel",
-            "",
-            "Excel Files (*.xlsx *.xls)",
-        )
-
-        if not file_path:
-            return
-
-        try:
-            dataframe = self.service.open_excel(Path(file_path))
-            self.data_preview.load_dataframe(dataframe)
-            self.logs_panel.log(f"Excel abierto: {file_path}")
-            self.status.showMessage("Excel cargado correctamente")
-            self._refresh_ui()
-        except Exception as exc:
-            self._show_error("Error abriendo Excel", exc)
-
-    def open_pipeline(self) -> None:
-        file_path, _ = QFileDialog.getOpenFileName(
-            self,
-            "Abrir Pipeline",
+            "Abrir Consulta",
             "",
             "YAML Files (*.yaml *.yml)",
         )
@@ -179,13 +154,13 @@ class MainWindow(QMainWindow):
 
         try:
             self.service.load_pipeline(Path(file_path))
-            self.logs_panel.log(f"Pipeline abierto: {file_path}")
-            self.status.showMessage("Pipeline abierto correctamente")
-            self._refresh_ui()
+            self.logs_panel.log(f"Consulta abierta: {file_path}")
+            self.status.showMessage("Consulta abierta correctamente")
+            self.refresh_ui()
         except Exception as exc:
-            self._show_error("Error abriendo pipeline", exc)
+            self.show_error("Error abriendo consulta", exc)
 
-    def save_pipeline(self) -> None:
+    def save_query(self) -> None:
         current_path = self.service.state.pipeline_path
 
         if current_path:
@@ -193,7 +168,7 @@ class MainWindow(QMainWindow):
         else:
             file_path, _ = QFileDialog.getSaveFileName(
                 self,
-                "Guardar Pipeline",
+                "Guardar Consulta",
                 "",
                 "YAML Files (*.yaml *.yml)",
             )
@@ -203,23 +178,13 @@ class MainWindow(QMainWindow):
 
         try:
             self.service.save_pipeline(Path(file_path))
-            self.logs_panel.log(f"Pipeline guardado: {file_path}")
-            self.status.showMessage("Pipeline guardado correctamente")
-            self._refresh_ui()
+            self.logs_panel.log(f"Consulta guardada: {file_path}")
+            self.status.showMessage("Consulta guardada correctamente")
+            self.refresh_ui()
         except Exception as exc:
-            self._show_error("Error guardando pipeline", exc)
+            self.show_error("Error guardando consulta", exc)
 
-    def run_pipeline(self) -> None:
-        try:
-            dataframe = self.service.run_pipeline_preview_mode()
-            self.data_preview.load_dataframe(dataframe)
-            self.logs_panel.log("Pipeline ejecutado en modo preview.")
-            self.status.showMessage("Pipeline ejecutado")
-            self._refresh_ui()
-        except Exception as exc:
-            self._show_error("Error ejecutando pipeline", exc)
-
-    def export_pipeline(self) -> None:
+    def export_query(self) -> None:
         file_path, _ = QFileDialog.getSaveFileName(
             self,
             "Exportar Parquet",
@@ -240,12 +205,35 @@ class MainWindow(QMainWindow):
             self.service.state.last_result_path = output_path
 
             self.logs_panel.log(f"Resultado exportado: {output_path}")
-            self.status.showMessage("ExportaciÃ³n completada")
-            self._refresh_ui()
+            self.status.showMessage("Exportación completada")
+            self.refresh_ui()
         except Exception as exc:
-            self._show_error("Error exportando resultado", exc)
+            self.show_error("Error exportando resultado", exc)
 
-    def _refresh_ui(self) -> None:
+
+    def export_python(self) -> None:
+        file_path, _ = QFileDialog.getSaveFileName(
+            self,
+            "Exportar Python",
+            "",
+            "Python Files (*.py)",
+        )
+
+        if not file_path:
+            return
+
+        try:
+            output_path = Path(file_path)
+            script = self.service.generate_python_script()
+
+            output_path.write_text(script, encoding="utf-8")
+
+            self.logs_panel.log(f"Script Python exportado: {output_path}")
+            self.status.showMessage("Python exportado correctamente")
+
+        except Exception as exc:
+            self.show_error("Error exportando Python", exc)
+    def refresh_ui(self) -> None:
         state = self.service.state
 
         self.project_tree.refresh_workspace(self.service.workspace)
@@ -260,88 +248,12 @@ class MainWindow(QMainWindow):
                 "generated_script": self.service.generate_python_script(),
             }
         )
+
         dirty_mark = "*" if state.is_dirty else ""
         self.setWindowTitle(f"ETL Platform Desktop - {state.pipeline_name}{dirty_mark}")
 
-    def add_transformation_from_catalog(self, item) -> None:
-        step_type = item.data(1000)
-
-        if not step_type:
-            return
-
-        self.add_transformation(step_type)
-
-    def add_transformation(self, forced_step_type: str | None = None) -> None:
-        try:
-            dataframe = self.service.preview_current_source()
-
-            if dataframe.is_empty():
-                QMessageBox.warning(
-                    self,
-                    "Sin datos",
-                    "Primero debes abrir un CSV o Excel.",
-                )
-                return
-
-            dialog = AddTransformationDialog(
-                dataframe.columns,
-                self,
-                forced_step_type=forced_step_type,
-            )
-
-            if dialog.exec() != QDialog.DialogCode.Accepted:
-                return
-
-            step = dialog.get_step()
-            self.service.add_transformation_step(step)
-
-            result = self.service.run_pipeline_preview_mode()
-            self.data_preview.load_dataframe(result)
-
-            self.logs_panel.log(f"TransformaciÃ³n agregada: {step['type']}")
-            self.status.showMessage("TransformaciÃ³n agregada")
-            self._refresh_ui()
-
-        except Exception as exc:
-            self._show_error("Error agregando transformaciÃ³n", exc)
-
-
-    def activate_source_from_project_tree(self, item) -> None:
-        source_name = item.data(0, SOURCE_NAME_ROLE)
-
-        if not source_name:
-            return
-
-        try:
-            dataframe = self.service.activate_source_as_query(source_name)
-            self.data_preview.load_dataframe(dataframe)
-
-            self.logs_panel.log(f"Fuente activada como consulta: {source_name}")
-            self.status.showMessage(f"Consulta activa: {source_name}")
-            self._refresh_ui()
-
-        except Exception as exc:
-            self._show_error("Error activando fuente", exc)
-    def _show_error(self, title: str, exc: Exception) -> None:
+    def show_error(self, title: str, exc: Exception) -> None:
         self.logs_panel.log(f"{title}: {exc}")
         self.status.showMessage("Error")
         QMessageBox.critical(self, title, str(exc))
-
-    def preview_until_selected_step(self, item) -> None:
-        step_index = item.data(0, STEP_INDEX_ROLE)
-
-        if step_index is None:
-            return
-
-        try:
-            dataframe = self.service.run_pipeline_until_step(step_index)
-            self.data_preview.load_dataframe(dataframe)
-
-            self.logs_panel.log(
-                f"Vista previa hasta el paso {step_index + 1}."
-            )
-            self.status.showMessage(f"Preview hasta paso {step_index + 1}")
-
-        except Exception as exc:
-            self._show_error("Error mostrando preview por paso", exc)
 

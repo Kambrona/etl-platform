@@ -1,4 +1,5 @@
-from PySide6.QtWidgets import (
+﻿from PySide6.QtWidgets import (
+    QCheckBox,
     QComboBox,
     QDialog,
     QDialogButtonBox,
@@ -7,11 +8,12 @@ from PySide6.QtWidgets import (
     QLineEdit,
     QListWidget,
     QListWidgetItem,
+    QSpinBox,
 )
 
 
 class AddTransformationDialog(QDialog):
-    """Dialog used to add a transformation step to the pipeline."""
+    """Dialog used to add a transformation step to the query."""
 
     def __init__(
         self,
@@ -23,12 +25,23 @@ class AddTransformationDialog(QDialog):
 
         self.columns = columns
 
-        self.setWindowTitle("Agregar Transformación")
-        self.resize(560, 380)
+        self.setWindowTitle("Agregar Transformacion")
+        self.resize(580, 420)
 
         self.transformation_type = QComboBox()
         self.transformation_type.addItems(
-            ["rename_columns", "filter_rows", "select_columns", "drop_columns"]
+            [
+                "rename_columns",
+                "filter_rows",
+                "select_columns",
+                "drop_columns",
+                "sort_rows",
+                "remove_duplicates",
+                "limit_rows",
+                "uppercase",
+                "lowercase",
+                "trim",
+            ]
         )
 
         self.column_label = QLabel("Columna:")
@@ -41,6 +54,14 @@ class AddTransformationDialog(QDialog):
 
         self.value_label = QLabel("Valor:")
         self.target_value = QLineEdit()
+
+        self.sort_descending = QCheckBox("Orden descendente")
+
+        self.limit_label = QLabel("Cantidad:")
+        self.limit_rows = QSpinBox()
+        self.limit_rows.setMinimum(1)
+        self.limit_rows.setMaximum(10000000)
+        self.limit_rows.setValue(100)
 
         self.columns_label = QLabel("Columnas:")
         self.columns_list = QListWidget()
@@ -57,10 +78,12 @@ class AddTransformationDialog(QDialog):
         )
 
         self.layout = QFormLayout(self)
-        self.layout.addRow("Transformación:", self.transformation_type)
+        self.layout.addRow("Transformacion:", self.transformation_type)
         self.layout.addRow(self.column_label, self.source_column)
         self.layout.addRow(self.operator_label, self.operator)
         self.layout.addRow(self.value_label, self.target_value)
+        self.layout.addRow("", self.sort_descending)
+        self.layout.addRow(self.limit_label, self.limit_rows)
         self.layout.addRow(self.columns_label, self.columns_list)
         self.layout.addRow("Ayuda:", self.help_label)
         self.layout.addWidget(self.buttons)
@@ -86,6 +109,9 @@ class AddTransformationDialog(QDialog):
         self.operator.setVisible(False)
         self.value_label.setVisible(False)
         self.target_value.setVisible(False)
+        self.sort_descending.setVisible(False)
+        self.limit_label.setVisible(False)
+        self.limit_rows.setVisible(False)
         self.columns_label.setVisible(False)
         self.columns_list.setVisible(False)
 
@@ -95,7 +121,7 @@ class AddTransformationDialog(QDialog):
             self.value_label.setVisible(True)
             self.target_value.setVisible(True)
             self.value_label.setText("Nuevo nombre:")
-            self.target_value.setPlaceholderText("Ejemplo: ActualLine")
+            self.target_value.setPlaceholderText("Ejemplo: TotalVentas")
             self.help_label.setText("Selecciona una columna y escribe el nuevo nombre.")
 
         elif step_type == "filter_rows":
@@ -106,20 +132,41 @@ class AddTransformationDialog(QDialog):
             self.value_label.setVisible(True)
             self.target_value.setVisible(True)
             self.value_label.setText("Valor:")
-            self.target_value.setPlaceholderText("Ejemplo: 2024 o January")
-            self.help_label.setText(
-                "Construye el filtro seleccionando columna, operador y valor."
-            )
+            self.target_value.setPlaceholderText("Ejemplo: 2024 o Enero")
+            self.help_label.setText("Construye un filtro sin escribir la columna manualmente.")
 
-        elif step_type == "select_columns":
+        elif step_type in {"select_columns", "drop_columns", "remove_duplicates"}:
             self.columns_label.setVisible(True)
             self.columns_list.setVisible(True)
-            self.help_label.setText("Selecciona las columnas que quieres conservar.")
 
-        elif step_type == "drop_columns":
-            self.columns_label.setVisible(True)
-            self.columns_list.setVisible(True)
-            self.help_label.setText("Selecciona las columnas que quieres eliminar.")
+            if step_type == "select_columns":
+                self.help_label.setText("Selecciona las columnas que quieres conservar.")
+            elif step_type == "drop_columns":
+                self.help_label.setText("Selecciona las columnas que quieres eliminar.")
+            else:
+                self.help_label.setText("Selecciona columnas para detectar duplicados. Si no seleccionas ninguna, se usa toda la fila.")
+
+        elif step_type == "sort_rows":
+            self.column_label.setVisible(True)
+            self.source_column.setVisible(True)
+            self.sort_descending.setVisible(True)
+            self.help_label.setText("Ordena la consulta por la columna seleccionada.")
+
+        elif step_type == "limit_rows":
+            self.limit_label.setVisible(True)
+            self.limit_rows.setVisible(True)
+            self.help_label.setText("Conserva solo las primeras N filas.")
+
+        elif step_type in {"uppercase", "lowercase", "trim"}:
+            self.column_label.setVisible(True)
+            self.source_column.setVisible(True)
+
+            if step_type == "uppercase":
+                self.help_label.setText("Convierte la columna seleccionada a mayusculas.")
+            elif step_type == "lowercase":
+                self.help_label.setText("Convierte la columna seleccionada a minusculas.")
+            else:
+                self.help_label.setText("Elimina espacios al inicio y final de la columna seleccionada.")
 
     def _selected_columns(self) -> list[str]:
         return [item.text() for item in self.columns_list.selectedItems()]
@@ -138,7 +185,7 @@ class AddTransformationDialog(QDialog):
             formatted_value = f"'{value}'"
 
         if operator == "contains":
-            return f'CAST("{column}" AS TEXT) LIKE \'%{value}%\''
+            return f'CAST("{column}" AS TEXT) LIKE ''%{value}%'''
 
         return f'"{column}" {operator} {formatted_value}'
 
@@ -173,6 +220,37 @@ class AddTransformationDialog(QDialog):
                 "type": "drop_columns",
                 "name": "Drop Columns",
                 "config": {"columns": self._selected_columns()},
+            }
+
+        if step_type == "sort_rows":
+            return {
+                "type": "sort_rows",
+                "name": "Sort Rows",
+                "config": {
+                    "column": column,
+                    "descending": self.sort_descending.isChecked(),
+                },
+            }
+
+        if step_type == "remove_duplicates":
+            return {
+                "type": "remove_duplicates",
+                "name": "Remove Duplicates",
+                "config": {"columns": self._selected_columns()},
+            }
+
+        if step_type == "limit_rows":
+            return {
+                "type": "limit_rows",
+                "name": "Limit Rows",
+                "config": {"n": self.limit_rows.value()},
+            }
+
+        if step_type in {"uppercase", "lowercase", "trim"}:
+            return {
+                "type": step_type,
+                "name": step_type.replace("_", " ").title(),
+                "config": {"column": column},
             }
 
         raise ValueError(f"Unsupported transformation type: {step_type}")

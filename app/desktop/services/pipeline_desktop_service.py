@@ -24,72 +24,49 @@ class PipelineDesktopService:
         return self.state
 
     def get_excel_sheet_names(self, path: Path) -> list[str]:
-        if path.suffix.lower() != ".xlsx":
-            raise ValueError("Por ahora solo soportamos archivos Excel .xlsx.")
-
         workbook = load_workbook(path, read_only=True, data_only=True)
         sheets = list(workbook.sheetnames)
         workbook.close()
-
         return sheets
 
     def _read_excel_safe(self, path: Path, sheet_name: str | None = None) -> pl.DataFrame:
-        if path.suffix.lower() != ".xlsx":
-            raise ValueError("Por ahora solo soportamos archivos Excel .xlsx.")
-
         workbook = load_workbook(path, read_only=True, data_only=True)
-
-        if sheet_name:
-            sheet = workbook[sheet_name]
-        else:
-            sheet = workbook.active
-
+        sheet = workbook[sheet_name] if sheet_name else workbook.active
         rows = list(sheet.iter_rows(values_only=True))
         workbook.close()
 
         if not rows:
             return pl.DataFrame()
 
-        raw_headers = rows[0]
-        headers: list[str] = []
-        used_headers: set[str] = set()
+        headers = []
+        used = set()
 
-        for index, value in enumerate(raw_headers):
+        for index, value in enumerate(rows[0]):
             header = str(value).strip() if value is not None else f"Column_{index + 1}"
-
             if not header:
                 header = f"Column_{index + 1}"
 
-            original_header = header
+            base = header
             counter = 2
 
-            while header in used_headers:
-                header = f"{original_header}_{counter}"
+            while header in used:
+                header = f"{base}_{counter}"
                 counter += 1
 
-            used_headers.add(header)
+            used.add(header)
             headers.append(header)
 
-        records: list[dict[str, object]] = []
+        records = []
 
         for row in rows[1:]:
-            record: dict[str, object] = {}
-
+            record = {}
             for index, header in enumerate(headers):
                 record[header] = row[index] if index < len(row) else None
-
             records.append(record)
-
-        if not records:
-            return pl.DataFrame({header: [] for header in headers})
 
         return pl.DataFrame(records, infer_schema_length=None, strict=False)
 
-    def add_data_source(
-        self,
-        path: Path,
-        sheet_name: str | None = None,
-    ) -> DataSource:
+    def add_data_source(self, path: Path, sheet_name: str | None = None) -> DataSource:
         suffix = path.suffix.lower()
 
         if suffix == ".csv":
@@ -101,10 +78,7 @@ class PipelineDesktopService:
         else:
             raise ValueError(f"Tipo de fuente no soportado: {suffix}")
 
-        source_name = path.stem
-
-        if sheet_name:
-            source_name = f"{path.stem}_{sheet_name}"
+        source_name = path.stem if not sheet_name else f"{path.stem}_{sheet_name}"
 
         source = DataSource(
             name=source_name,
@@ -127,11 +101,7 @@ class PipelineDesktopService:
 
         if source.source_type == "CSV":
             self.state.steps = [
-                {
-                    "type": "read_csv",
-                    "name": "Leer CSV",
-                    "config": {"path": str(source.path)},
-                }
+                {"type": "read_csv", "name": "Leer CSV", "config": {"path": str(source.path)}}
             ]
             dataframe = pl.read_csv(source.path)
 
@@ -140,21 +110,14 @@ class PipelineDesktopService:
                 {
                     "type": "read_excel",
                     "name": "Leer Excel",
-                    "config": {
-                        "path": str(source.path),
-                        "sheet_name": source.sheet_name,
-                    },
+                    "config": {"path": str(source.path), "sheet_name": source.sheet_name},
                 }
             ]
             dataframe = self._read_excel_safe(source.path, source.sheet_name)
 
         elif source.source_type == "Parquet":
             self.state.steps = [
-                {
-                    "type": "read_parquet",
-                    "name": "Leer Parquet",
-                    "config": {"path": str(source.path)},
-                }
+                {"type": "read_parquet", "name": "Leer Parquet", "config": {"path": str(source.path)}}
             ]
             dataframe = pl.read_parquet(source.path)
 
@@ -171,8 +134,7 @@ class PipelineDesktopService:
 
     def open_excel(self, path: Path) -> pl.DataFrame:
         sheets = self.get_excel_sheet_names(path)
-        sheet_name = sheets[0] if sheets else None
-        source = self.add_data_source(path, sheet_name)
+        source = self.add_data_source(path, sheets[0] if sheets else None)
         return self.activate_source_as_query(source.name)
 
     def add_export_step(self, output_path: Path) -> None:
@@ -187,16 +149,47 @@ class PipelineDesktopService:
         self.state.steps = [
             step for step in self.state.steps if step.get("type") != "export_parquet"
         ]
-
         self.state.steps.append(export_step)
         self.state.is_dirty = True
         self.workspace.is_dirty = True
 
+    def add_transformation_step(self, step: dict[str, Any], index: int | None = None) -> None:
+        export_steps = [
+            current_step
+            for current_step in self.state.steps
+            if current_step.get("type") == "export_parquet"
+        ]
+
+        steps = [
+            current_step
+            for current_step in self.state.steps
+            if current_step.get("type") != "export_parquet"
+        ]
+
+        if index is None:
+            steps.append(step)
+        else:
+            safe_index = max(1, min(index, len(steps)))
+            steps.insert(safe_index, step)
+
+        steps.extend(export_steps)
+        self.state.steps = steps
+        self.state.is_dirty = True
+        self.workspace.is_dirty = True
+
+    def delete_step(self, step_index: int) -> None:
+        if step_index <= 0:
+            raise ValueError("No se puede eliminar el paso de lectura de datos.")
+
+        if step_index >= len(self.state.steps):
+            raise ValueError("El paso seleccionado no existe.")
+
+        self.state.steps.pop(step_index)
+        self.state.is_dirty = True
+        self.workspace.is_dirty = True
+
     def build_pipeline_document(self) -> dict[str, Any]:
-        return {
-            "name": self.state.pipeline_name,
-            "steps": self.state.steps,
-        }
+        return {"name": self.state.pipeline_name, "steps": self.state.steps}
 
     def save_pipeline(self, path: Path) -> None:
         document = self.build_pipeline_document()
@@ -245,54 +238,58 @@ class PipelineDesktopService:
 
         return pl.DataFrame()
 
-    def add_transformation_step(self, step: dict[str, Any]) -> None:
-        export_steps = [
-            current_step
-            for current_step in self.state.steps
-            if current_step.get("type") == "export_parquet"
-        ]
+    def _apply_step(self, dataframe: pl.DataFrame, step: dict[str, Any]) -> pl.DataFrame:
+        step_type = step.get("type")
+        config = step.get("config", {})
 
-        self.state.steps = [
-            current_step
-            for current_step in self.state.steps
-            if current_step.get("type") != "export_parquet"
-        ]
+        if step_type in {"read_csv", "read_excel", "read_parquet", "export_parquet"}:
+            return dataframe
 
-        self.state.steps.append(step)
-        self.state.steps.extend(export_steps)
-        self.state.is_dirty = True
-        self.workspace.is_dirty = True
+        if step_type == "rename_columns":
+            return dataframe.rename(config.get("columns", {}))
+
+        if step_type == "filter_rows":
+            expression = config.get("expression")
+            return dataframe.sql(f"SELECT * FROM self WHERE {expression}") if expression else dataframe
+
+        if step_type == "select_columns":
+            columns = config.get("columns", [])
+            return dataframe.select(columns) if columns else dataframe
+
+        if step_type == "drop_columns":
+            columns = config.get("columns", [])
+            return dataframe.drop(columns) if columns else dataframe
+
+        if step_type == "sort_rows":
+            column = config.get("column")
+            return dataframe.sort(column, descending=config.get("descending", False)) if column else dataframe
+
+        if step_type == "remove_duplicates":
+            columns = config.get("columns", [])
+            return dataframe.unique(subset=columns, keep="first") if columns else dataframe.unique(keep="first")
+
+        if step_type == "limit_rows":
+            return dataframe.head(config.get("n", 100))
+
+        if step_type == "uppercase":
+            column = config.get("column")
+            return dataframe.with_columns(pl.col(column).cast(pl.Utf8).str.to_uppercase().alias(column)) if column else dataframe
+
+        if step_type == "lowercase":
+            column = config.get("column")
+            return dataframe.with_columns(pl.col(column).cast(pl.Utf8).str.to_lowercase().alias(column)) if column else dataframe
+
+        if step_type == "trim":
+            column = config.get("column")
+            return dataframe.with_columns(pl.col(column).cast(pl.Utf8).str.strip_chars().alias(column)) if column else dataframe
+
+        return dataframe
 
     def apply_preview_transformations(self, dataframe: pl.DataFrame) -> pl.DataFrame:
         result = dataframe
 
         for step in self.state.steps:
-            step_type = step.get("type")
-            config = step.get("config", {})
-
-            if step_type in {"read_csv", "read_excel", "read_parquet", "export_parquet"}:
-                continue
-
-            if step_type == "rename_columns":
-                result = result.rename(config.get("columns", {}))
-
-            elif step_type == "filter_rows":
-                expression = config.get("expression")
-
-                if expression:
-                    result = result.sql(f"SELECT * FROM self WHERE {expression}")
-
-            elif step_type == "select_columns":
-                columns = config.get("columns", [])
-
-                if columns:
-                    result = result.select(columns)
-
-            elif step_type == "drop_columns":
-                columns = config.get("columns", [])
-
-                if columns:
-                    result = result.drop(columns)
+            result = self._apply_step(result, step)
 
         return result
 
@@ -302,35 +299,9 @@ class PipelineDesktopService:
 
     def run_pipeline_until_step(self, step_index: int) -> pl.DataFrame:
         dataframe = self.preview_current_source()
-        steps_to_apply = self.state.steps[: step_index + 1]
 
-        for step in steps_to_apply:
-            step_type = step.get("type")
-            config = step.get("config", {})
-
-            if step_type in {"read_csv", "read_excel", "read_parquet", "export_parquet"}:
-                continue
-
-            if step_type == "rename_columns":
-                dataframe = dataframe.rename(config.get("columns", {}))
-
-            elif step_type == "filter_rows":
-                expression = config.get("expression")
-
-                if expression:
-                    dataframe = dataframe.sql(f"SELECT * FROM self WHERE {expression}")
-
-            elif step_type == "select_columns":
-                columns = config.get("columns", [])
-
-                if columns:
-                    dataframe = dataframe.select(columns)
-
-            elif step_type == "drop_columns":
-                columns = config.get("columns", [])
-
-                if columns:
-                    dataframe = dataframe.drop(columns)
+        for step in self.state.steps[: step_index + 1]:
+            dataframe = self._apply_step(dataframe, step)
 
         return dataframe
 
@@ -343,44 +314,60 @@ class PipelineDesktopService:
             config = step.get("config", {})
 
             if step_type == "read_csv":
-                path = config.get("path", "")
-                lines.append(f'{dataframe_name} = pl.read_csv(r"{path}")')
+                lines.append(f'{dataframe_name} = pl.read_csv(r"{config.get("path", "")}")')
 
             elif step_type == "read_excel":
                 path = config.get("path", "")
                 sheet_name = config.get("sheet_name")
-
                 if sheet_name:
-                    lines.append(
-                        f'{dataframe_name} = pl.read_excel(r"{path}", sheet_name="{sheet_name}")'
-                    )
+                    lines.append(f'{dataframe_name} = pl.read_excel(r"{path}", sheet_name="{sheet_name}")')
                 else:
                     lines.append(f'{dataframe_name} = pl.read_excel(r"{path}")')
 
             elif step_type == "read_parquet":
-                path = config.get("path", "")
-                lines.append(f'{dataframe_name} = pl.read_parquet(r"{path}")')
+                lines.append(f'{dataframe_name} = pl.read_parquet(r"{config.get("path", "")}")')
 
             elif step_type == "rename_columns":
-                columns = config.get("columns", {})
-                lines.append(f"{dataframe_name} = {dataframe_name}.rename({columns!r})")
+                lines.append(f"{dataframe_name} = {dataframe_name}.rename({config.get('columns', {})!r})")
 
             elif step_type == "filter_rows":
                 expression = config.get("expression", "")
-                lines.append(
-                    f'{dataframe_name} = {dataframe_name}.sql("SELECT * FROM self WHERE {expression}")'
-                )
+                lines.append(f'{dataframe_name} = {dataframe_name}.sql("SELECT * FROM self WHERE {expression}")')
 
             elif step_type == "select_columns":
-                columns = config.get("columns", [])
-                lines.append(f"{dataframe_name} = {dataframe_name}.select({columns!r})")
+                lines.append(f"{dataframe_name} = {dataframe_name}.select({config.get('columns', [])!r})")
 
             elif step_type == "drop_columns":
+                lines.append(f"{dataframe_name} = {dataframe_name}.drop({config.get('columns', [])!r})")
+
+            elif step_type == "sort_rows":
+                lines.append(
+                    f"{dataframe_name} = {dataframe_name}.sort({config.get('column', '')!r}, descending={config.get('descending', False)!r})"
+                )
+
+            elif step_type == "remove_duplicates":
                 columns = config.get("columns", [])
-                lines.append(f"{dataframe_name} = {dataframe_name}.drop({columns!r})")
+                if columns:
+                    lines.append(f"{dataframe_name} = {dataframe_name}.unique(subset={columns!r}, keep='first')")
+                else:
+                    lines.append(f"{dataframe_name} = {dataframe_name}.unique(keep='first')")
+
+            elif step_type == "limit_rows":
+                lines.append(f"{dataframe_name} = {dataframe_name}.head({config.get('n', 100)!r})")
+
+            elif step_type == "uppercase":
+                column = config.get("column", "")
+                lines.append(f"{dataframe_name} = {dataframe_name}.with_columns(pl.col({column!r}).cast(pl.Utf8).str.to_uppercase().alias({column!r}))")
+
+            elif step_type == "lowercase":
+                column = config.get("column", "")
+                lines.append(f"{dataframe_name} = {dataframe_name}.with_columns(pl.col({column!r}).cast(pl.Utf8).str.to_lowercase().alias({column!r}))")
+
+            elif step_type == "trim":
+                column = config.get("column", "")
+                lines.append(f"{dataframe_name} = {dataframe_name}.with_columns(pl.col({column!r}).cast(pl.Utf8).str.strip_chars().alias({column!r}))")
 
             elif step_type == "export_parquet":
-                path = config.get("path", "")
-                lines.append(f'{dataframe_name}.write_parquet(r"{path}")')
+                lines.append(f'{dataframe_name}.write_parquet(r"{config.get("path", "")}")')
 
         return "\n".join(lines)
